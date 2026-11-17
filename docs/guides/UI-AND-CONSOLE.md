@@ -289,7 +289,7 @@
 | 容量卡 | 进度条 + 级别 chip +「字数/上限（百分比）」+ 五种清晰度计数 + 最初/锚点；`maxChars`（0=不限）、`warnChars`（默认 60000）；立即整理、压缩到 80%、手动记一条、确认提醒 | number ×2 + 按钮 | `unified.memoryCard.maxChars/warnChars`（`client.js:2667-2686`）；`POST /memory-card {action:"maintain"\|"compact"\|"ack"}`（`client.js:2589-2601`） |
 | 手动记一条 | 内容、重要度 1–100、scope（QQ/B站/共享） | textarea/number/select | `POST /memory-card {action:"add", text, importance, scope}`（`client.js:2636-2640`、`client.js:2692-2703`） |
 | 记忆卡规则（`Section`） | 启用、全量卡上限（GB）、QQ/B站 注入上限、最近 N 天保持清楚、多少天后模糊/可遗忘、每日整理时间、满 100% 自动压缩、容量告警私聊管理员、B站 提示词带 QQ 记忆 | switch/number | 全部写 `unified.memoryCard.*`（`client.js:2634-2635`、`client.js:2705-2734`） |
-| 最近记忆 | 初次相遇（来源/日期/合并条数/预览）、多选操作（设为初次相遇 / 合并为一个事件 / 恢复自动）、合并标题 + 合并后置顶、每条：清晰度/平台/合并/她自己说的/最初/重要度/置顶 + 置顶/忘记 | checkbox/number/按钮 | `POST /memory-card {action:"pin"\|"forget"\|"merge-memories"\|"set-first-meet"\|"clear-first-meet"}`（`client.js:2602-2633`、`client.js:2735-2782`） |
+| 最近记忆 | 初次相遇（来源/日期/合并条数/预览）、多选操作（设为初次相遇 / 合并为一个事件 / 清除初次相遇）、合并标题 + 合并后置顶、每条：清晰度/平台/合并/她自己说的/最初/重要度/置顶 + 置顶/忘记 | checkbox/number/按钮 | `POST /memory-card {action:"pin"\|"forget"\|"merge-memories"\|"set-first-meet"\|"clear-first-meet"}`（`client.js:2602-2633`、`client.js:2735-2782`） |
 | 两份注入预览 | QQ / B站 注入文本（`<pre>` 滚动） | 只读 | `data.promptQq/promptBili`（`client.js:2783-2789`） |
 | 完整记忆卡 | `memory-card.md` 原文 | 只读 | `client.js:2790-2791` |
 | 备份 | 文件、体积、时间、恢复（二次确认） | 按钮 | `POST /memory-card {action:"restore", name}`（`client.js:2792-2795`） |

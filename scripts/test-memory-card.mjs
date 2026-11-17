@@ -57,7 +57,7 @@ test('重要度：和主人的情绪互动最重，第一次见面是永久锚�
   assert.ok(ownerEmotion.importance >= CFG.minOwnerImportance);
 });
 
-test('QQ inbox：投递一次就入库；重复不重复占容量；第一句主人消息被钉成锚点', () => {
+test('QQ inbox：投递一次就入库；重复不重复占容量；第一句主人消息不再被自动钉成锚点', () => {
   const card = createEmptyCard(NOW);
   const lines = [
     JSON.stringify({ at: '2026-10-20T10:00:00+08:00', kind: 'group', sender: 'omm', senderId: '2373982492', text: '角色在吗', isOwner: false, direct: true }),
@@ -70,11 +70,17 @@ test('QQ inbox：投递一次就入库；重复不重复占容量；第一句主
   assert.equal(result.added, 3);
   const owners = card.records.filter((r) => r.tags.includes('owner'));
   assert.equal(owners.length, 2);
-  const anchor = card.records.find((r) => r.pinned);
-  assert.ok(anchor);
-  assert.equal(anchor.kind, 'first');
-  assert.equal(anchor.importance, 100);
-  assert.equal(anchor.text, '角色，今天过得怎么样呀');
+  // 2026-11-05：自动升级取消 —— 第一句主人消息就是普通记录，不占永久位
+  assert.equal(card.records.some((r) => r.pinned), false, '没有记录被自动置顶');
+  assert.equal(card.records.some((r) => r.kind === 'first'), false, '不再有 kind:first');
+  assert.equal(card.meta.firstOwnerRecordId, undefined, '不再写自动升级元数据');
+  const firstOwnerRecord = card.records.find((r) => r.text === '角色，今天过得怎么样呀');
+  assert.ok(firstOwnerRecord, '第一句主人消息仍然入库');
+  assert.equal(firstOwnerRecord.pinned, false);
+  assert.equal(firstOwnerRecord.anchor, false);
+  assert.equal(firstOwnerRecord.kind, 'owner');
+  assert.equal(firstOwnerRecord.firstMet, false);
+  assert.equal(firstOwnerRecord.isInitial, false);
   // 再投一次同样的行 → inboxSeen 去重
   const again = ingestInboxLines(card, lines, CFG, NOW);
   assert.equal(again.added, 0);
@@ -366,7 +372,7 @@ function addOwnerRecord(card, offsetDays, text) {
   }, CFG, NOW).record;
 }
 
-test('最初：仅主人互动，前10/中10/后10/30天后概率递减', () => {
+test('最初：只承认手动指定，不再按时间概率自动指定（遗留函数取值不变）', () => {
   assert.equal(INITIAL_WINDOW_DAYS, 30);
   assert.equal(initialProbabilityForOffset(0), 0.9);
   assert.equal(initialProbabilityForOffset(9), 0.9);
@@ -390,27 +396,23 @@ test('最初：仅主人互动，前10/中10/后10/30天后概率递减', () => 
   card.meta.firstOwnerAt = day0.createdAt;
   refreshInitialState(card);
 
-  assert.equal(day0.firstMet, true, '最早的主人互动自动成为初次相遇');
-  assert.equal(day0.initialTier, 'first-meet');
-  assert.equal(day0.initialProbability, 1);
-  assert.equal(day5.initialTier, 'first10');
-  assert.equal(day5.initialProbability, 0.9);
-  assert.equal(day15.initialTier, 'mid10');
-  assert.equal(day15.initialProbability, 0.55);
-  assert.equal(day25.initialTier, 'late10');
-  assert.equal(day25.initialProbability, 0.3);
-  assert.equal(day40.initialTier, 'after');
-  assert.equal(day40.initialProbability, 0.03);
+  assert.equal(day0.firstMet, false, '不再自动把最早的主人互动当成初次相遇');
+  // 2026-11-05：自动指定取消 —— 不论离第一次互动多近、概率多高，都不再自动进永久位
+  for (const record of [day0, day5, day15, day25, day40]) {
+    assert.equal(record.isInitial, false, '不再按时间概率自动指定「最初」');
+    assert.equal(record.initialTier, '');
+    assert.equal(record.initialProbability, 0);
+    assert.equal(record.tags.includes('initial'), false);
+  }
   // 非主人互动永远不参与「最初」
   assert.equal(bili.isInitial, false);
   assert.equal(bili.initialTier, '');
 });
 
-test('初次相遇：取消置顶后不会被 refresh 复活，仍保留初次相遇分区', () => {
+test('初次相遇：手动标记取消置顶后 refresh 保留标记和分区', () => {
   const card = createEmptyCard(NOW - 20 * DAY_MS);
   const first = addOwnerRecord(card, 0, '第一次和主人说话');
-  addOwnerRecord(card, 3, '后来聊了别的');
-  refreshInitialState(card);
+  designateFirstMeeting(card, [first.id], { now: NOW });
   assert.equal(first.firstMet, true);
   assert.equal(first.pinned, true);
 
@@ -418,18 +420,20 @@ test('初次相遇：取消置顶后不会被 refresh 复活，仍保留初次�
   refreshInitialState(card);
   assert.equal(first.pinned, false, '用户取消置顶后不能被 refresh 写回 true');
   assert.equal(first.firstMet, true, 'firstMet 标记本身不能丢');
-
   const full = renderMemoryCard(card, { config: CFG, full: true, now: NOW });
   assert.match(full, /## 初次相遇/);
   assert.match(full, /第一次和主人说话/);
 });
 
-test('最近板块优先收 owner 的近期记录，不被“最初”挤空', () => {
+test('最近板块优先保留近期 owner 记录，不被“最初”挤空', () => {
   const card = createEmptyCard(NOW - 60 * DAY_MS);
   addOwnerRecord(card, 0, '第一天认识');
-  addOwnerRecord(card, 5, '最初第五天');
+  const early = addOwnerRecord(card, 20, '最初第二十天');
   addOwnerRecord(card, 58, '最近两天');
   refreshInitialState(card);
+  // 旧版持久化的 initial 标记仍可显示；最近 owner 记录则优先进入最近分区。
+  early.isInitial = true;
+  early.tags = [...new Set([...early.tags, 'initial'])];
   const full = renderMemoryCard(card, { config: CFG, full: true, now: NOW });
   const section = (title) => {
     const at = full.indexOf(`## ${title}`);
@@ -439,17 +443,47 @@ test('最近板块优先收 owner 的近期记录，不被“最初”挤空', (
     return next >= 0 ? rest.slice(0, next) : rest;
   };
   assert.match(section('最近记得的'), /最近两天/);
-  assert.match(section('最初的日子（和主人）'), /最初第五天/);
-  assert.doesNotMatch(section('最近记得的'), /最初第五天/, '同一记录不能既在最近又在最初');
+  assert.match(section('最初的日子（和主人）'), /最初第二十天/);
+  assert.doesNotMatch(section('最近记得的'), /最初第二十天/, '同一记录不能既在最近又在最初');
 });
 
-test('初次相遇：可单条指定、也可多条合并为一个事件；可恢复自动', () => {
+test('最初：自动路径的残留会被回收，手动指定仍进永久位', () => {
+  const card = createEmptyCard(NOW - 30 * DAY_MS);
+  const junk = addOwnerRecord(card, 0, '111');
+  junk.kind = 'first';
+  junk.pinned = true;
+  junk.anchor = true;
+  junk.importance = 100;
+  junk.clarity = 'vivid';
+  junk.title = '最早和主人说话';
+  junk.isInitial = true;
+  junk.tags = [...new Set([...junk.tags, 'first', 'initial'])];
+  card.meta.firstOwnerRecordId = junk.id;
+  refreshInitialState(card);
+  assert.equal(junk.kind, 'event');
+  assert.equal(junk.pinned, false);
+  assert.equal(junk.anchor, false);
+  assert.equal(junk.importance, 60);
+  assert.equal(junk.title, '');
+  assert.equal(junk.isInitial, false);
+  assert.equal(junk.tags.includes('first'), false);
+  assert.equal(junk.tags.includes('initial'), false);
+  assert.equal(card.meta.firstOwnerRecordId, undefined);
+  designateFirstMeeting(card, [junk.id], { now: NOW });
+  assert.equal(card.meta.firstMetSource, 'manual');
+  assert.ok(card.records.some((record) => record.firstMet && record.pinned));
+});
+
+test('初次相遇：只由手动指定，可单条指定、也可多条合并为一个事件；可清除', () => {
   const card = createEmptyCard(NOW - 50 * DAY_MS);
   const a = addOwnerRecord(card, 0, '最早认识的那天');
   const b = addOwnerRecord(card, 3, '一起在群里聊到很晚');
   const c = addOwnerRecord(card, 8, '主人夸了我');
   refreshInitialState(card);
-  assert.equal(a.firstMet, true, '默认自动取最早一条');
+  // 不再自动取最早一条：没人指定，这个位置就是空的。
+  assert.equal(a.firstMet, false, '不再自动取最早一条');
+  assert.equal(card.meta.firstMetSource, '');
+  assert.equal(card.records.some((record) => record.firstMet), false);
 
   const single = designateFirstMeeting(card, [b.id], { now: NOW });
   assert.equal(single.ok, true);
@@ -462,8 +496,10 @@ test('初次相遇：可单条指定、也可多条合并为一个事件；可�
 
   const cleared = clearFirstMeeting(card);
   assert.equal(cleared.ok, true);
-  assert.equal(card.meta.firstMetSource, 'auto');
-  assert.equal(a.firstMet, true, '恢复自动后回到最早一条');
+  assert.equal(card.meta.firstMetSource, '');
+  assert.equal(card.records.some((record) => record.firstMet), false, '清除后没有人是初次相遇');
+  assert.equal(b.pinned, false, '清除后不留置顶特权');
+  assert.equal(b.importance, 60, '清除后重要度收回普通区间');
 
   const merged = designateFirstMeeting(card, [a.id, b.id, c.id], { now: NOW });
   assert.equal(merged.ok, true);
@@ -485,6 +521,7 @@ test('最初：渲染独立分区，且不会被彻底遗忘', () => {
   const first = addOwnerRecord(card, 0, '初次见面');
   const early = addOwnerRecord(card, 5, '最初那几天常聊天');
   refreshInitialState(card);
+  designateFirstMeeting(card, [first.id], { now: NOW });
   early.isInitial = true;
   early.tags = [...new Set([...early.tags, 'initial'])];
   const text = renderMemoryCard(card, { config: CFG, full: true, now: NOW });
@@ -518,7 +555,9 @@ test('合并事件：任意多条记忆可合并为一个，默认置顶，不�
     score: 8, scope: 'bili', platform: 'bili', createdAt: NOW - 9 * DAY_MS, lastSeenAt: NOW - 9 * DAY_MS,
   }, CFG, NOW).record;
   refreshInitialState(card);
+  designateFirstMeeting(card, [owner.id], { now: NOW });
   const firstBefore = card.meta.firstMetEventId;
+  assert.equal(firstBefore, owner.id);
 
   const merged = mergeMemories(card, [b1.id, b2.id], { title: '周末刷到的两个视频', pinned: true, now: NOW });
   assert.equal(merged.ok, true);
@@ -538,7 +577,7 @@ test('合并事件：任意多条记忆可合并为一个，默认置顶，不�
   // 非主人 + 主人混合：scope 收紧为 QQ，且不自动继承 owner 标签
   const mixed = mergeMemories(card, [owner.id, event.id], { title: '混合事件', pinned: false, now: NOW });
   assert.equal(mixed.ok, false, '初次相遇记录不能合并');
-  // 先恢复自动会重新把最早 owner 设成初次相遇，仍不能选；用普通 B站+手动记忆测试混合
+  // 初次相遇必须先清除指定才能合并；用普通 B站+手动记忆测试混合
   const manual = addMemoryRecord(card, {
     source: 'manual', text: '手动记的一条 QQ 事', title: 'QQ 手动', scope: 'qq', platform: 'qq',
     createdAt: NOW - 2 * DAY_MS, lastSeenAt: NOW - 2 * DAY_MS,

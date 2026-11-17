@@ -4923,14 +4923,14 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         setSelected([]);
       };
       const clearFirstMeet = async () => {
-        if (!confirm("取消手动指定的初次相遇，恢复为“最早一条主人互动”？")) return;
+        if (!confirm("取消手动指定的初次相遇？取消后这个位置为空。")) return;
         await act("clear-first-meet");
         setSelected([]);
       };
       const mergeSelected = async () => {
         if (selected.length < 2) { toast("✗ 至少选 2 条记忆才能合并成事件"); return; }
         if (selectedRecords.some((record) => record.firstMet)) {
-          toast("✗ 初次相遇记录不能合并；请先「恢复自动」");
+          toast("✗ 初次相遇记录不能合并；请先清除初次相遇指定");
           return;
         }
         const msg = `把选中的 ${selected.length} 条记忆合并成一个事件${mergePinned ? "（合并后置顶）" : ""}？原记录会从衰减卡移除，但全量卡已保留。`;
@@ -5118,17 +5118,17 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         h(Section, { title: "最近记忆", note: `${data.records?.length ?? 0} 条（按重要度）`, collapsible: false },
           h("div", { className: "qbw-infobox" },
             h("b", null, "初次相遇："),
-            data.firstMet?.source === "manual" ? "手动指定" : "自动（最早一条主人互动）",
+            data.firstMet?.source === "manual" ? "手动指定" : "尚无",
             data.firstMet?.at ? ` · ${fmtDate(data.firstMet.at)}` : "",
             data.firstMet?.mergedCount > 1 ? ` · 由 ${data.firstMet.mergedCount} 条合并` : "",
             h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-              data.firstMet?.preview || "（还没有主人互动；有了以后会自动把最早一条标为初次相遇）")),
+              data.firstMet?.preview || "（还没有指定；这个位置不会自动产生，需要手动选一条主人的互动）")),
           h("div", { className: "qbw-search" },
             h("span", { className: "qbw-label" }, "多选操作"),
             h("span", { className: "qbw-hint" }, `已选 ${selected.length} 条${selectedHasNonOwner ? "（含非主人记忆）" : ""}；多选会合并为一个事件；初次相遇只能选主人的互动`),
             h(Btn, { onClick: setFirstMeet, disabled: !!busy || !selected.length || selectedHasNonOwner }, "设为初次相遇"),
             h(Btn, { onClick: mergeSelected, disabled: !!busy || selected.length < 2 }, "合并为一个事件"),
-            data.firstMet?.source === "manual" ? h(Btn, { kind: "qbw-btn2", onClick: clearFirstMeet, disabled: !!busy }, "恢复自动") : null),
+            data.firstMet?.source === "manual" ? h(Btn, { kind: "qbw-btn2", onClick: clearFirstMeet, disabled: !!busy }, "清除初次相遇") : null),
           h("div", { className: "qbw-search" },
             h("input", {
               className: "qbw-input", placeholder: "合并后的事件标题（可选；默认取第一条的标题）",

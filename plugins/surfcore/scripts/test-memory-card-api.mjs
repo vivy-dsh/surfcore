@@ -61,9 +61,10 @@ try {
   // 2) 状态 / 注入块
   const snap = mod.memoryCardSnapshot();
   assert.equal(snap.status.counts.owner, 1);
-  assert.equal(snap.status.counts.anchors, 1);
-  assert.equal(snap.status.counts.firstMet >= 1, true);
-  assert.equal(snap.firstMet.source, 'auto');
+  assert.equal(snap.status.counts.anchors, 0, '没有手动置顶或指定初次相遇时，不自动生成永久锚点');
+  // 初次相遇不再自动产生：没人指定时这个位置是空的。
+  assert.equal(snap.status.counts.firstMet, 0);
+  assert.equal(snap.firstMet.source, '');
   assert.equal(snap.loaded, 'decayed');
   assert.equal(mod.fullMemoryCardSnapshot().status.records >= 2, true);
   assert.ok(snap.markdown.includes('记忆卡'));
@@ -81,13 +82,21 @@ try {
   // 3) pin / add / forget
   const ownerRecord = snap.records.find((record) => record.tags.includes('owner'));
   assert.ok(ownerRecord);
-  assert.equal(ownerRecord.isInitial, true);
   const designated = await mod.applyMemoryCardAction('set-first-meet', { ids: [ownerRecord.id] });
   assert.equal(designated.ok, true);
-  assert.equal(mod.memoryCardSnapshot().firstMet.source, 'manual');
+  const designatedSnap = mod.memoryCardSnapshot();
+  assert.equal(designatedSnap.firstMet.source, 'manual');
+  const designatedRecord = designatedSnap.records.find((record) => record.id === ownerRecord.id);
+  assert.equal(designatedRecord.pinned, true);
+  assert.equal(designatedRecord.isInitial, true);
   const clearedFirst = await mod.applyMemoryCardAction('clear-first-meet');
   assert.equal(clearedFirst.ok, true);
-  assert.equal(mod.memoryCardSnapshot().firstMet.source, 'auto');
+  const clearedSnap = mod.memoryCardSnapshot();
+  assert.equal(clearedSnap.firstMet.source, '');
+  const clearedRecord = clearedSnap.records.find((record) => record.id === ownerRecord.id);
+  assert.equal(clearedRecord.firstMet, false);
+  assert.equal(clearedRecord.pinned, false);
+  assert.ok(Number(clearedRecord.importance) <= 60);
   const pinned = await mod.applyMemoryCardAction('pin', { id: ownerRecord.id, pinned: true });
   assert.equal(pinned.ok, true);
   assert.equal(mod.memoryCardSnapshot().records.find((r) => r.id === ownerRecord.id).pinned, true);
@@ -124,10 +133,12 @@ try {
   assert.ok(mergedRecord);
   assert.equal(mergedRecord.title, '合并测试事件');
   assert.equal(mergedRecord.pinned, true);
-  assert.equal(mergedSnap.firstMet.source, 'auto', '合并普通记忆不应改变初次相遇');
+  assert.equal(mergedSnap.firstMet.source, '', '合并普通记忆不应产生初次相遇');
 
   // 置顶排序：置顶的合并事件应排在“重要度 100 但未置顶”的记忆之前
   await mod.applyMemoryCardAction('add', { text: '未置顶的高重要记忆', importance: 100, scope: 'bili' });
+  // 排序断言需要一条真正的初次相遇：手动指定回来。
+  await mod.applyMemoryCardAction('set-first-meet', { ids: [ownerRecord.id] });
   const sortSnap = mod.memoryCardSnapshot();
   const mergedIndex = sortSnap.records.findIndex((record) => record.tags.includes('merged'));
   const firstMetIndex = sortSnap.records.findIndex((record) => record.firstMet);

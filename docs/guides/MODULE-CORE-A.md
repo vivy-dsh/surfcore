@@ -68,6 +68,7 @@ model-prices ◄─ token-ledger（计价）/ token-budget（比例）◄─ DSH
 `looksNoteworthyMessage(text,{names})`（`:263`）：长度 <6 直接 false（`:265`），否则情绪/第一次/
 约定/冲突/「主人」/角色名任一命中即 true。`scoreMemory(input,config)`（`:1080`）见算法。
 `initialProbabilityForOffset(day)`（`:405`）：`<10→0.9`、`<20→0.55`、`<30→0.3`、否则 `0.03`。
+**遗留**：2026-11-05 起 `refreshInitialState` 不再调用它（永久位改为手动指定），函数与取值保持不变以免破坏导出面。
 
 **卡读写**：`createEmptyCard`（`:272`）；`loadMemoryCard`（`:313`）坏文件返回 **null**（不覆盖）；
 `normalizeCard`（`:322`）超过 2000 条先保 pinned 再留最近（`:342`）、水位数组各留 5000（`:334`）；
@@ -94,8 +95,8 @@ model-prices ◄─ token-ledger（计价）/ token-budget（比例）◄─ DSH
 `recallFullMemory`（`:1025`，空 query 退化为尾部 N 条且 `matchScore=0`）、`saveFullMemoryCard`（`:1043`）。
 
 **数据结构**：`memory-card.json`（`createEmptyCard`，`:272`）：`version/createdAt/updatedAt/lastMaintenanceAt/
-lastDecayDate` + `meta`（`inboxSeen[]`、`sourceSeen[]`、`firstOwnerRecordId`、`firstOwnerAt`、
-`firstMetSource(空|auto|manual)`、`firstMetAt`、`firstMetRecordIds≤20`、`firstMetEventId`）+
+lastDecayDate` + `meta`（`inboxSeen[]`、`sourceSeen[]`、（自动指定已于 2026-11-05 移除）`firstOwnerAt`、
+`firstMetSource(空|manual)`、`firstMetAt`、`firstMetRecordIds≤20`、`firstMetEventId`）+
 `alerts`（`level 0-3`、`at`、`acknowledgedLevel/At`、`lastNotified{level:ts}`）+
 `stats`（`ingested/fromBili/fromQq/decayed/compacted/forgotten/last*At`）+ `records[]`。
 
@@ -121,12 +122,12 @@ senderId/groupId/isOwner/isSelf/conversationKey/direct/quoteSelf/text≤500`；�
 
 #### 算法/规则
 **① 评分 `scoreMemory`**（`:1080`），起点 8（`:1090`）：主人私聊 +42（`:1092`）/主人在群 +32（`:1093`）/
-直接对她说 +8（`:1096`）/情绪 +0…24（`:1100`）/第一次 +30（`:1104`）/约定 +16（`:1108`）/
+直接对她说 +8（`:1096`）/情绪 +0…24（`:1100`）/约定 +16（`:1108`）/
 矛盾道歉 +14（`:1112`）/关于自己 +5（`:1116`）/B站 打分 `clamp(0,18)`（`:1121`）/收藏 +8（`:1123`）/
 日记 +4（`:1124`）/文本 <6 字 −12（`:1126`）；`manualImportance` **覆盖**全部加减（`:1130`）。
 `kind` 顺序（`:1135`）：first→owner→emotion(≥14)→conflict→promise→event。
-`pinned`：显式 true，或「isFirst 且（isOwner 或 ≥60）」（`:1142`）；`isFirst && isOwner` 直接 100 且 pinned
-（`:1143`）；最终夹 1–100（`:1147`）；标签自动补 `owner/emotion(≥8)/first/bili/qq`（`:1150`）。
+`isFirst` 只由手动合并初次相遇时传入；正常入库不再按文本自动置位。指定初次相遇直接 100 且 pinned；
+最终夹 1–100（`:1147`）；标签自动补 `owner/emotion(≥8)/first/bili/qq`（`:1150`）。
 
 **② 初始清晰度**（`makeRecord`，`:1193`）：pinned→vivid；`importance≥65`→vivid；否则 clear。
 正文入库前已脱敏（`:1171`）；`sensitive` 由话题黑名单补标（`:1202`，表在 `:109`）。

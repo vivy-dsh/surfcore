@@ -227,11 +227,11 @@ export function memoryCardSnapshot(config = memoryCardConfig(), runtimeSharing =
         ?? card.records.find((item) => item.firstMet)
         ?? null;
       return {
-        source: card.meta.firstMetSource || 'auto',
-        at: card.meta.firstMetAt || card.meta.firstOwnerAt || null,
+        source: card.meta.firstMetSource === 'manual' ? 'manual' : '',
+        at: card.meta.firstMetAt || null,
         recordIds: Array.isArray(card.meta.firstMetRecordIds) ? card.meta.firstMetRecordIds : [],
         eventId: card.meta.firstMetEventId || null,
-        title: record?.title || '（自动：最早一条主人互动）',
+        title: record?.title || '（未指定）',
         preview: record?.text?.slice(0, 200) || '',
         mergedCount: Array.isArray(card.meta.firstMetRecordIds) ? card.meta.firstMetRecordIds.length : 0,
       };

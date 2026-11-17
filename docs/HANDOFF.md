@@ -9,17 +9,16 @@
 
 ### 当前事实
 
-- **基线**：vivy-dsh fork `origin/main` @ `0ce8580`（`v0.8.9`）；功能工作树 `feat/surfcore-fork-wip-20261117`。
-- **改动**：初次相遇改为仅手动指定；入站 QQ 语音接入 `fetch_ptt_text`（失败回落 `[语音]`）；另有 DSH_HOME profile 路径、隔离目录命名与 `.bat` 行尾兼容修正。未改版本号、未打 tag。
-- **已验证**：记忆卡 28/28、插件 API integration OK、memory-card wiring OK、record-text 21 项全过、bridge harness 16 项全过、regressions 全过、voice 83/83（外部 `voice-tool` 部分因目录缺失跳过）、audit setup guards 通过。
-- **全量 audit**：150/153 scripts passed。剩余 3 项依赖本机/Windows 环境：`test-stickers` 读取未入库的 `config.json`；`test-console-encoding` 依赖 Windows `chcp`；`test-update-apply-result` 依赖 PowerShell。当前 macOS 环境无法覆盖后两项。
-- **尚未验证**：真实 QQ/SnowLuma 入站语音闭环与 `get_record` 音频形状；本轮没有运行只读探针。消费仓库需要在 fork 提交形成后同步 submodule pin 与 gitlink，再跑启动器适配测试。
+- **基线**：vivy-dsh fork `origin/main` @ `0ce8580`（`v0.8.9`）；改动已推送到 `origin/feat/surfcore-fork-wip-20261117`。
+- **改动**：初次相遇改为仅手动指定，并清理指向已删除记录的无效状态；入站 QQ 语音接入 `fetch_ptt_text`（失败回落 `[语音]`）；另有 DSH_HOME profile 路径、隔离目录命名与 `.bat` 行尾兼容修正。未改版本号、未打 tag。
+- **已验证**：记忆卡 29/29、插件 API integration OK、memory-card wiring OK、record-text 21 项全过、bridge harness 16 项全过、regressions 全过、voice 83/83（外部 `voice-tool` 部分因目录缺失跳过）、audit setup guards 通过。
+- **全量 audit**：149/153 scripts passed。剩余 4 项：`test-stickers` 需要未入库的本机 `config.json`；`test-console-encoding` 需要 Windows `chcp`；`test-release-manifest` 仍对照 v0.8.9 稳定清单（按仓库流程，功能分支合入开发线后才重生成）；`test-update-apply-result` 需要 Windows PowerShell。
+- **尚未验证**：真实 QQ/SnowLuma 入站语音闭环与 `get_record` 音频形状；本轮没有运行只读探针。消费仓库的 SurfCore commit/hash pin 与 gitlink 正在同步，完成后还需跑启动器适配测试。
 
 ### 下一步
 
-1. 把兼容性修正与入站语音改动提交到本功能分支并推送 vivy-dsh fork（用户已授权）；不推稳定 `main`、不发版。
-2. 在 DSH 模板仓库更新 SurfCore commit/hash pin，重跑 `setup` 与匹配测试。
-3. QQ/SnowLuma 启动后再按 case 验证真机语音闭环。
+1. 在 DSH 模板仓库更新 SurfCore commit/hash pin，重跑 `setup` 与匹配测试。
+2. QQ/SnowLuma 启动后再按 case 验证真机语音闭环。
 
 ---
 

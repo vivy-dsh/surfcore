@@ -2,7 +2,7 @@
 
 > **本表由“协调/发布会话”维护。任何会话开工、收工、换分支、准备合并，都必须更新自己那一行。**
 > 规则见 [`docs/guides/MULTI-SESSION-WORKFLOW.md`](guides/MULTI-SESSION-WORKFLOW.md) 与 `AGENTS.md §1.9`。
-> 更新时间：2026-11-02 16:08（Asia/Shanghai）
+> 更新时间：2026-11-17（Asia/Shanghai）
 
 ## 0. 当前协调人
 
@@ -29,6 +29,7 @@
 | **贴吧平台**（待启动） | 计划 `D:\deepseekwork\surfcore-tieba` | 计划 `feat/platform-tieba` | 先解决内置 `tieba` 占位；只读 adapter | 🕒 交接已写，待启动 |
 | **抖音平台**（待启动） | 计划 `D:\deepseekwork\surfcore-douyin` | 计划 `feat/platform-douyin` | 只读 adapter/短链解析/记忆/prompt | 🕒 交接已写，待启动 |
 | **微信平台**（待启动） | 计划 `D:\deepseekwork\surfcore-wechat` | 计划 `feat/platform-wechat` | 先确认公众号/个人微信；个人微信不做自动化 | 🕒 交接已写，待启动 |
+| **DSH fork 同步**（2026-11-17） | `/private/tmp/surfcore-fork-wip-20261117` | `feat/surfcore-fork-wip-20261117` | 手动初次相遇、入站语音转写、兼容性修复 | ✅ 已推送到 vivy-dsh fork；消费仓 pin/gitlink 同步中 |
 
 ### 本轮“合并后又撤回”记录（用户要求：未完成，不进下一版）
 

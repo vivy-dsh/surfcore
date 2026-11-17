@@ -12,8 +12,10 @@ import path from 'node:path';
 export const REQUIRED_MCP_IDS = Object.freeze(['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe']);
 
 /** 扫 ~/.dsh/profiles/<name>/cordis.patch.yml，找哪些 profile 缺了 MCP 条目。 */
-export function checkProfileMcp(home, { ids = REQUIRED_MCP_IDS } = {}) {
-  const root = path.join(String(home || ''), '.dsh', 'profiles');
+export function checkProfileMcp(home, { ids = REQUIRED_MCP_IDS, profilesRoot = '' } = {}) {
+  // 2026-11-05: DSH_HOME 可以指向项目内目录（模板默认 .artifacts/dsh-home），
+  // 此时 ~/.dsh/profiles 不是真实 profile 位置，审计会一直误报「缺 MCP」。
+  const root = profilesRoot || path.join(String(home || ''), '.dsh', 'profiles');
   const profiles = [];
   let names = [];
   try { names = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch {}

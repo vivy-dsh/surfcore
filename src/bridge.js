@@ -20,6 +20,14 @@ import { NodeApiClient, unwrap, createTurnCollector, discoverDshLaunchToken } fr
 import { mdToPlain, splitForQQ, truncateText, truncateTextTail } from './md-to-plain.js';
 import { SENSITIVE_RE, SECRET_TOKEN_RE } from './sensitive.js';
 import { looksLikeUnfinished, selectWaitBatch } from './v2-wait.js';
+import {
+  RECORD_TEXT_DEFAULTS,
+  recordTextConfig,
+  describeFailure,
+  createPttTextFetcher,
+  createMinuteLimiter,
+  createTranscriptCache,
+} from './record-text.js';
 import { compactModelMessage } from './qq-model-view.js';
 import { atInfo } from './qq-at.js';
 import {
@@ -1245,6 +1253,17 @@ function loadConfig() {
     ...(cfg.socialV2?.voice ?? {})
   };
 
+  // socialV2.asrInbound：**收到的**语音条 → 文字（走网关 fetch_ptt_text，也就是 QQ 自己的转写）。
+  // 为什么入站也要有开关：转写文本会进模型上下文，且每条语音 = 一次网关往返；
+  // 默认开（不需要用户准备任何东西），history 默认关（上线补历史一次可能好几条语音）。
+  // 失败一律回落 [语音]（fail-open），绝不改消息正文、也绝不让消息卡住 —— 见 src/record-text.js。
+  cfg.socialV2.asrInbound = {
+    ...RECORD_TEXT_DEFAULTS,
+    ...(cfg.socialV2?.asrInbound && typeof cfg.socialV2.asrInbound === 'object' && !Array.isArray(cfg.socialV2.asrInbound)
+      ? cfg.socialV2.asrInbound
+      : {})
+  };
+
   // socialV2.sticker.collect 也需要深度合并，避免旧配置缺失 collect 子项时丢默认值。
   cfg.socialV2.sticker = {
     enabled: true,
@@ -1670,7 +1689,7 @@ function withTimeout(promise, ms, label) {
 }
 
 async function segmentsToText(segments, options = {}) {
-  const { resolveAtName, resolveReply, includeReply = true } = options ?? {};
+  const { resolveAtName, resolveReply, resolveRecord, includeReply = true } = options ?? {};
   // 有些 OneBot 实现直接把纯文本消息放在 message 字段里（string）
   if (typeof segments === 'string') return segments.trim();
   const out = [];
@@ -1693,7 +1712,15 @@ async function segmentsToText(segments, options = {}) {
       // 市场表情（mface）在部分网关实现里出现：有 summary 就用它，别让模型只看到 "[mface]"。
       case 'mface': out.push(`[表情${d.summary ? `:${d.summary}` : ''}]`); break;
       case 'image': out.push('[图片]'); break;
-      case 'record': out.push('[语音]'); break;
+      case 'record': {
+        // 语音条：能拿到转写就写成 [语音：说了什么]，拿不到保持原来的 [语音]。
+        // resolveRecord 由调用方注入（一条消息只问网关一次）；它抛错也只能是「这次没转写」，
+        // 不允许把异常带出去 —— 语音转写失败绝不能影响消息本身能不能进上下文。
+        let spoken = '';
+        try { spoken = String((await resolveRecord?.()) ?? '').trim(); } catch { spoken = ''; }
+        out.push(spoken ? `[语音：${spoken}]` : '[语音]');
+        break;
+      }
       case 'video': out.push('[视频]'); break;
       case 'file': out.push(`[文件${d.name ?? ''}]`); break;
       case 'reply': {
@@ -2205,6 +2232,73 @@ async function main() {
       const file = path.join(STATE_DIR, 'voice-errors.log');
       fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...record }) + String.fromCharCode(10));
     } catch {}
+  }
+
+  // ── 入站语音条 → 文字（收到的语音才有 QQ 转写） ────────────────────────────
+  // 谁问：只有消息里真的出现 record 段才会调到这里（segmentsToText 自己懒触发）。
+  // 问几次：一条消息一次（同消息多段语音共用）；上限由 asrInbound.maxPerMinute 兜。
+  // 失败怎么办：一律回空串 ⇒ 上层照旧写 [语音]（fail-open），并在活动流露一次脸（限频）。
+  const recordTranscriptCache = createTranscriptCache();
+  const recordTextLimiter = createMinuteLimiter();
+  const recordTextFailureAt = new Map();
+
+  function asrInboundCfg() {
+    return recordTextConfig(cfg.socialV2?.asrInbound ?? {});
+  }
+
+  /** 失败露面（AGENTS 1.7：不能只有日志）。同一类失败 5 分钟只报一次，别刷屏。 */
+  function noteRecordTextFailure(reason) {
+    const detail = describeFailure(reason);
+    log(`[语音] 入站语音转写失败：${detail}（这条按 [语音] 处理，不影响消息）`);
+    // no-ptt = QQ 侧本来就没有这条语音的转写（短语音、对方关了转写），属于预期内，
+    // 进活动流只会刷屏；模型那边仍然看得到 [语音]，降级是可见的。
+    // 其余（超时 / 网关不可达 / 限流 / 回包异常）都是链路问题，必须露脸。
+    if (reason === 'no-ptt') return;
+    const now = Date.now();
+    const last = recordTextFailureAt.get(reason) ?? 0;
+    if (now - last < 300_000) return;
+    recordTextFailureAt.set(reason, now);
+    appendActivity(`[语音] 转写失败：${detail}（已按 [语音] 处理）`);
+  }
+
+  /**
+   * 给一条消息造「语音转文字」解析器：`() => Promise<string>`，拿不到就给空串。
+   * 必须**每条消息造一个**并在同一条消息的多次 segmentsToText 调用里复用，
+   * 否则带引用/带 @ 的消息会把同一句话问网关两遍。
+   */
+  function createRecordResolver({ messageId }) {
+    const conf = asrInboundCfg();
+    const id = String(messageId ?? '').trim();
+    let pending = null;
+    return async function resolveRecord() {
+      if (!conf.enabled || !id) return '';
+      const cached = recordTranscriptCache.get(id);
+      if (cached !== undefined) return cached;
+      if (!pending) {
+        pending = (async () => {
+          if (!recordTextLimiter.take(conf.maxPerMinute)) {
+            noteRecordTextFailure('rate-limited');
+            return '';
+          }
+          const fetcher = createPttTextFetcher({
+            httpUrl: cfg.snowluma?.httpUrl,
+            accessToken: cfg.snowluma?.accessToken,
+            config: conf,
+            // 显式把桥接自己的 fetch 传进去：这一层要能被虚拟网关顶掉（测试 / 离线自检），
+            // 也免得模块内默认走 Node 全局 fetch、绕过桥接的超时与审计口径。
+            fetchImpl: fetch
+          });
+          const result = await fetcher.fetch(id);
+          if (result.ok) {
+            recordTranscriptCache.set(id, result.text);
+            return result.text;
+          }
+          noteRecordTextFailure(result.reason);
+          return '';
+        })();
+      }
+      return pending;
+    };
   }
 
   /** 给错误补上 code/hint/stage，让上层接口能把「谁的锅」写清楚（AGENTS 1.7）。 */
@@ -14224,8 +14318,11 @@ async function main() {
         }
       }
       const sender = raw.sender?.card || raw.sender?.nickname || String(raw.sender?.user_id ?? raw.user_id ?? '未知');
+      // 被引用的语音也转写：这是「他刚说了啥」最常被问到的时刻。
+      // replyInfoCache 已经把结果按 (会话, 消息id) 缓存住，不会重复问网关。
       const text = await segmentsToText(raw.message ?? [], {
         resolveAtName: kind === 'group' ? (qq) => resolveGroupMemberName(convId, qq) : null,
+        resolveRecord: createRecordResolver({ messageId }),
         includeReply: false
       });
       const senderUserId = raw.sender?.user_id ?? raw.user_id ?? null;
@@ -15639,21 +15736,24 @@ async function main() {
   async function historyCandidateFromRaw(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const segments = Array.isArray(raw.message) ? raw.message : (typeof raw.message === 'string' ? raw.message : []);
+    const messageIdRaw = raw.message_id ?? raw.real_id ?? raw.message_seq;
+    const messageId = messageIdRaw != null ? String(messageIdRaw).trim() : '';
     let text = '';
     let plain = '';
     try {
       // 历史消息里的引用/at 不在这里解析（解析器会逐条打网关）；引用用占位符即可，
       // 真要看那条消息 AI 仍可按 messageId 调 qq_get_message_detail。
-      text = await segmentsToText(segments, { includeReply: true });
-      plain = await segmentsToText(segments, { includeReply: false });
+      // 语音转写默认**不**在这条路上开（asrInbound.history）：补历史一次可能好几条语音 = 好几次往返，
+      // 而历史只是唤醒时的背景。需要时用户可以打开这个开关。
+      const resolveRecord = asrInboundCfg().history ? createRecordResolver({ messageId }) : null;
+      text = await segmentsToText(segments, { includeReply: true, resolveRecord });
+      plain = await segmentsToText(segments, { includeReply: false, resolveRecord });
     } catch {}
     const senderInfo = raw.sender && typeof raw.sender === 'object' ? raw.sender : {};
     const senderId = String(senderInfo.user_id ?? raw.user_id ?? '').trim();
     const self = String(selfUserId || '').trim();
     const isSelf = Boolean(self) && senderId === self;
     const sender = isSelf ? '我' : (String(senderInfo.card || senderInfo.nickname || '').trim() || senderId || '未知');
-    const messageIdRaw = raw.message_id ?? raw.real_id ?? raw.message_seq;
-    const messageId = messageIdRaw != null ? String(messageIdRaw).trim() : '';
     const time = Number(raw.time) > 0 ? Number(raw.time) * 1000 : 0;
     if (!messageId || !time) return null;
     const media = extractMediaFromSegments(segments);
@@ -16066,12 +16166,15 @@ async function main() {
       return resolveGroupMemberName(event.group_id, qq);
     };
     const resolveReply = (messageId) => resolveReplyInfo(kind, id, messageId, event.self_id);
+    // 语音条转写：先算出这条消息的 id，再把它交给解析器（差一个字段就问不了网关）。
+    // 同一个解析器在下面两次 segmentsToText 里复用，避免同一条消息问两遍。
+    const messageRef = String(event.message_id ?? event.msg_id ?? event.message_seq ?? '');
+    const resolveRecord = createRecordResolver({ messageId: messageRef });
     // textContent 带引用对象信息，供 DSH 判断“这句话在对谁说”；
     // plainContent 只保留当前消息自己的文字，用于命令/指向性判断，避免被引用原文干扰。
-    const textContent = await segmentsToText(event.message ?? [], { resolveAtName, resolveReply });
-    const plainContent = await segmentsToText(event.message ?? [], { resolveAtName, includeReply: false });
+    const textContent = await segmentsToText(event.message ?? [], { resolveAtName, resolveReply, resolveRecord });
+    const plainContent = await segmentsToText(event.message ?? [], { resolveAtName, includeReply: false, resolveRecord });
     const mediaList = extractMediaFromSegments(event.message ?? []);
-    const messageRef = String(event.message_id ?? event.msg_id ?? event.message_seq ?? '');
     const seqRef = event.message_seq != null ? String(event.message_seq) : '';
     const refsToStore = [...new Set([messageRef, seqRef].filter(Boolean))];
     if (refsToStore.length > 0 && mediaList.length > 0) {

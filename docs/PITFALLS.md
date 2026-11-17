@@ -4000,3 +4000,83 @@ npm run test:audit
   读写不对称（GET `/dsh/model` 已代理）导致“能显示、改不动”。
 - **修法**：补 `proxyDshFollowDefault` + 路由；新增静态契约测试，钉住前端路径 ⊆ 宿主路由。
 - **教训**：**中间代理层也是接口**；桥接新增一条路由，宿主必须同步开代理，否则前端只能 404。
+
+## 入站语音转文字：两个能把人坑半天的 harness 陷阱（2026-11-05）
+
+**背景**：`[语音]` 现在会变成 `[语音：<QQ 转写>]`（网关 `fetch_ptt_text`，见
+[case](cases/2026-11-05-inbound-record-text.md)）。写这条链路时被 VM 测试框架坑了两次，
+下次动 `bridge.js` 一定还会遇到：
+
+### 坑 1：沙箱只铺「具名导出」，`import * as X` 会得到 undefined
+
+- **现象**：`scripts/audit-bridge-harness.mjs` 里 `ReferenceError: recordText is not defined`
+  （或改成 `X.foo` 时变成 `Cannot read properties of undefined`），而模块本身 import 得好好的。
+- **根因**：harness 用逐行正则**删掉 `bridge.js` 的所有顶层 import**，靠
+  `vm.createContext({ ..., ...模块名 })` 把导出铺进沙箱 —— `...ns` 铺的是**具名导出**，
+  根本没有 `ns` 这个键。所以桥接里只有两种写法能在沙箱里工作：
+  `import { foo } from './x.js'` 或 `import fs from 'node:fs'`（后者被显式注入）。
+- **修法**：`bridge.js` 一律用具名 import（全仓 56 处都是这么写的，只有我新加的那处是 `import * as`）。
+  harness 里要加一行 `import * as X from '../src/x.js'` + 上下文里 `...X`。
+- **预防**：给 `bridge.js` 加新模块时，先 `grep -c "^import \*" src/bridge.js`，应该是 0。
+
+### 坑 2：模块内默认的全局 `fetch` 是 **Node 真身**，不是沙箱里的虚拟网关
+
+- **现象**：单元测试里断言"网关被调用过"永远失败（调用数 0），而且测试会**真的去连**
+  `127.0.0.1:3000`（3 次重试 + 退避，白等 1.5 秒，报 `fetch-error`）。
+- **根因**：`fakeFetch` 只注入到 **VM 沙箱**。`bridge.js` 里直接写 `fetch(...)` 走的是沙箱那份 ✓；
+  但把 `fetch` 当默认参数留给**模块内部**（`createPttTextFetcher({fetchImpl = fetch})`）时，
+  默认值在模块自己的 realm 求值 = Node 全局 fetch ✗。
+- **修法**：桥接调用时**显式传入**：`createPttTextFetcher({ ..., fetchImpl: fetch })`。
+- **预防**：任何"桥接调模块、模块再发网络请求"的分层，都把 fetch/http 作为参数从桥接传下去；
+  否则不但测不了，还会真的打本机端口。
+
+### 设计决定：`retcode 100` 不进活动流
+
+- QQ 侧没有转写（`retcode=100`「消息中不包含语音」）是**预期内**的（短语音、对方关了转写），
+  只写日志；超时/网关不可达/限流/回包异常才写活动流（同类 5 分钟一次）。
+- **理由**：AGENTS 1.7 要的是"失败可见"，不是"失败刷屏"。降级本身在模型上下文里就看得见（`[语音]`）。
+- **教训**：区分"链路坏了"和"业务上就是没有"，前者必须露脸，后者露脸会训练用户忽略告警。
+
+## 改了 pinned 文件却没提交 → 下次 `npm run start` 会硬失败（2026-11-05）
+
+**现象**：`cd <外层仓库> && npm run start` / `restart` / `setup:components` 直接抛
+
+```
+SurfCorePatchDrift: SURFCORE_PATCH_DRIFT: src/bridge.js sha256 mismatch: expected d6a8a62c…, found f103e414…
+```
+
+`node --test tests/surfcore-adapter.test.mjs tests/surfcore-integration.test.mjs` 同样失败。
+
+**根因**：`scripts/lib/surfcore-component-pins.json` 钉住了「SurfCore 子模块提交号 + 每个被 patch 的
+源文件 sha256」，`ensureSurfcoreAdapter()`（被 `scripts/vivy-dsh.mjs:137` 在**每次启动时**调用）
+会用它们校验工作区。**这是故意的门禁**：上游字节变了就必须重新确认补丁锚点还成立。
+所以只要 patch **目标**文件（`surfcore-component-patch.mjs` 的 `targets` 表，`src/bridge.js` 等 9 个）
+有**未提交改动**，启动链路就拒绝工作 —— 哪怕改动本身完全正确。
+（2026-11-05 实测：`pins.sources` 里还有 `plugins/surfcore/lib/client.js` 这种**不是 patch 目标**的
+历史条目，它漂移**不会**让启动失败 —— `renderPatchedSource()` 找不到目标时直接返回 `null`。
+排查时别被它误导，认准 `targets` 表。）
+
+**怎么修**（顺序不能反）：
+
+1. 在子模块里提交改动：`git -C plugins/surfcore add <文件> && git -C plugins/surfcore commit -m "…"`
+   （`submodule.commit` 必须等于真实提交，**不能**对着未提交的工作区钉哈希，否则干净检出必炸）；
+2. 改 `scripts/lib/surfcore-component-pins.json`：`sources['src/bridge.js']` = 新 sha256、
+   `submodule.commit` = 新 HEAD；补丁**锚点**也变了才需要 `patchVersion +1`；
+3. 复验：`node --test tests/surfcore-adapter.test.mjs tests/surfcore-integration.test.mjs`
+   与 `node --test tests/component-patch.test.mjs` 必须全绿。
+
+**教训**：这是跨仓库交付的一部分，不是"发布时再说"。改完 surfcore 的 pinned 文件，要么当场提交+重钉，
+要么明确告诉用户「现在别跑 `npm run start`」。报错文案只在终端里滚过去，很容易被当成环境噪音。
+
+**当前状态（2026-11-05 21:20，用户选择"先别碰 git"）**：`sources['src/bridge.js']` 已**临时钉到工作区哈希**
+（另加了 `_temporaryPinNote` 说明缘由），没提交任何东西。启动门禁已实测打开：
+`applyComponentPatches()` 能渲染 9 个 patch 目标、`surfcore-integration` 25/0、`component-patch` 5/0。
+两个尾巴要知道：
+1. `tests/surfcore-adapter.test.mjs` 的「pinned sources … stay untouched」会断言
+   `git -C plugins/surfcore status --porcelain` 为**空**且 HEAD == `PINNED_COMMIT` ——
+   **只要子模块有任何未提交改动就必失败**（谁的都算），临时 pin 救不了它，只有提交能。
+2. 同一个文件里的 `a send whose result never came back …`（断言 `gateway.posts[0].authorization`）
+   来自外层的 `plugins/dsh-surfcore-adapter/`（整个目录都还没进 git），与造桥改动无关。
+
+**收尾动作**：提交这两个改动后，把 `submodule.commit` 改成新 HEAD（`src/bridge.js` 的哈希**不用再改**，
+提交不改字节），删掉 `_temporaryPinNote`，再跑一遍上面三个套件。

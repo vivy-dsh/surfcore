@@ -5,6 +5,72 @@
 
 ---
 
+## 快照：2026-11-17（vivy-dsh fork 兼容性更新）
+
+### 当前事实
+
+- **基线**：vivy-dsh fork `origin/main` @ `0ce8580`（`v0.8.9`）；功能工作树 `feat/surfcore-fork-wip-20261117`。
+- **改动**：初次相遇改为仅手动指定；入站 QQ 语音接入 `fetch_ptt_text`（失败回落 `[语音]`）；另有 DSH_HOME profile 路径、隔离目录命名与 `.bat` 行尾兼容修正。未改版本号、未打 tag。
+- **已验证**：记忆卡 28/28、插件 API integration OK、memory-card wiring OK、record-text 21 项全过、bridge harness 16 项全过、regressions 全过、voice 83/83（外部 `voice-tool` 部分因目录缺失跳过）、audit setup guards 通过。
+- **全量 audit**：150/153 scripts passed。剩余 3 项依赖本机/Windows 环境：`test-stickers` 读取未入库的 `config.json`；`test-console-encoding` 依赖 Windows `chcp`；`test-update-apply-result` 依赖 PowerShell。当前 macOS 环境无法覆盖后两项。
+- **尚未验证**：真实 QQ/SnowLuma 入站语音闭环与 `get_record` 音频形状；本轮没有运行只读探针。消费仓库需要在 fork 提交形成后同步 submodule pin 与 gitlink，再跑启动器适配测试。
+
+### 下一步
+
+1. 把兼容性修正与入站语音改动提交到本功能分支并推送 vivy-dsh fork（用户已授权）；不推稳定 `main`、不发版。
+2. 在 DSH 模板仓库更新 SurfCore commit/hash pin，重跑 `setup` 与匹配测试。
+3. QQ/SnowLuma 启动后再按 case 验证真机语音闭环。
+
+---
+
+## 快照：2026-11-05 19:35（入站语音条 → 文字；ASR 第一层）
+
+### 当前事实
+
+- **package.json version**：`0.8.6`（编辑会话未 bump / 未 tag / 未推）
+- **本轮改动**：入站 `record` 段 → `[语音：<QQ 转写>]`，新增 `src/record-text.js` +
+  `scripts/test-record-text.mjs`（19 用例全通过）。
+  **同日的 ASR 侧（外层仓库 `plugins/asr`，不在本库）**：组件通道音频归一
+  （`normalizeWave()`，非 16k/双声道自动转，面板通道仍严格）+ 注册契约测试
+  `tests/asr-registration.test.mjs`（含活的 profile 检查）；ASR 套件 70 用例 69 通过 1 跳过。
+  case：`docs/cases/2026-11-05-inbound-record-text.md`；坑：`docs/PITFALLS.md` 末尾两条 harness 陷阱。
+- **已测**：`test-record-text` 19/19、`test:regressions` 全绿、`test-voice` 83/0、
+  `test-audit-bridge` 通过、`test:audit` 102/108。
+  那 6 条失败**与本改动无关**（都是本机环境：`start.bat` CRLF、macOS 没有 `chcp`/`powershell`、
+  character-store fixture、bili 状态路径、dsh-health 读不到 profile）。
+  `test-console` / `test-console-ui` 需要**在跑的**桥接控制台（3100），当前没起，属环境依赖。
+
+### 没验证到的（真机缺口）
+
+1. **QQ 传输当前是关的**：SnowLuma 容器 `Exited (0)`、网关 3000 不通、控制台 3100 不通
+   ⇒ 「收到语音 → AI 看到文字」全链路**只有 fixture 证据**。
+2. 群消息是否也生成 QQ 转写（QQ 侧行为，不可控）。
+3. 转写是否随消息立即就绪（我们靠 `attempts=3` / `retryDelayMs=500ms` / 总预算 4s 兜）。
+4. 真实网关 `fetch_ptt_text` 回包形状（按 MCP 目录的 `{text}` 实现）。
+
+### 下一步（顺序）
+
+1. QQ 起来后发一条语音，看日志/活动流 + 入库正文是否为 `[语音：…]`；
+   调 `config.json → socialV2.asrInbound`（`enabled/attempts/retryDelayMs/maxChars/maxPerMinute/history`）。
+2. **先量形状**：SnowLuma 一起来就跑
+   `node scripts/probe-record-shape.mjs --message <QQ消息id>`（只读探针，见 case 文档末节）——
+   `get_record` 的回包形状没有权威定义（SDK 里 `MediaInfo` 是空接口），量到再写，
+   别按猜测写 120 行。探针本身带单测（`scripts/test-record-text.mjs` 第 6 节）。
+3. **本地 SenseVoice 兜底（第二层）**：网关没转写时，`bot.getRecord({file, out_format:'wav'})`
+   → `dsh-local-asr` 的 `/dsh-asr/internal/transcribe`（fail-open）。零件已就位：
+   音频归一已在插件侧做完（44.1k/双声道自动转 16k 单声道）、SDK 有 `getRecord`、
+   返回体按图片那套 `MediaInfo` 探测 `base64`/`url`/`file`、组件令牌在 `$DSH_HOME/asr/runtime.json`。
+   只剩两件：① 真机确认 SnowLuma 愿意喂入站语音的 `file`；② 桥接侧取音频+调组件接口（约 150 行+用例）。
+   边界：**网关 token 只留在桥接**，音频解码留在 ASR 插件。
+4. 控制台「语音」页补一个 `asrInbound.enabled` 开关（现在只能改 config.json）。
+
+### 重启矩阵（本轮）
+
+- 改的是 `bridge.js` / 新增 `record-text.js` ⇒ **只需重启 QQ 桥接**；DSH 主进程与 `plugins/asr` 不用动。
+
+---
+
+
 ## 快照：2026-11-05 17:45（向量记忆 UI / 一键启动自检 / 完整重建）
 
 ### 当前事实

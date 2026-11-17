@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as markdown from '../src/md-to-plain.js';
 import * as sensitive from '../src/sensitive.js';
 import * as wait from '../src/v2-wait.js';
+import * as recordText from '../src/record-text.js';
 import * as safeFetch from '../src/safe-fetch.js';
 import * as forward from '../src/forward.js';
 import * as selfIdentity from '../src/self-identity.js';
@@ -267,6 +268,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     ...dshModelFollow,
     ...commandSpam,
     createOutbox,
+    ...recordText,
     ...voiceDiagnostics,
     ...allowlist,
     ...callname,

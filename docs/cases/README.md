@@ -8,6 +8,7 @@
 | --- | --- | --- | --- |
 | 2026-11-06 | [多模型重建索引（本地/云端多选）](2026-11-06-multi-model-index-picker.md) | 弹窗多选；已有索引标注；本地走 runtime、云端直连；不改 active provider | 待发布 |
 | 2026-11-06 | [向量记忆库：最近记录 + 语义搜索](2026-11-06-vector-memory-library.md) | 只读记忆库；最近 30 条 + 一句话搜旧事；默认隐藏敏感 | 待发布 |
+| 2026-11-05 | [入站语音条 → 文字](2026-11-05-inbound-record-text.md) | 收到的语音用网关转写填进上下文；失败回落 `[语音]` | 待发布 |
 | 2026-11-05 | [向量记忆 UI/自检/完整重建](2026-11-05-vector-memory-ui-self-test.md) | 本地/云端 Tab；radio + 一键启动；真实 embedding 自检；stale 检测；重建到 pending=0 | 待发布 |
 | 2026-11-04 | [B站 读取路径接向量记忆](2026-11-04-bili-vector-read.md) | vector 模式不再注入 B站 叙事卡；promptBili 前置检索块；失败不阻塞 | 待发布 |
 | 2026-11-04 | [向量记忆：每个模型空间独立索引](2026-11-04-vector-memory-multi-index.md) | 记录共享；索引按 modelSpace 分文件；切回已建模型不重建 | 待发布 |

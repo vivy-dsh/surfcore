@@ -179,7 +179,8 @@ function timestamp() {
 }
 
 function moveToQuarantine(target, quarantineDir, id) {
-  const dest = path.join(quarantineDir || path.join(path.dirname(target), '.removed'), `${id}-${timestamp()}`);
+  const suffix = crypto.randomBytes(6).toString('hex');
+  const dest = path.join(quarantineDir || path.join(path.dirname(target), '.removed'), `${id}-${timestamp()}-${suffix}`);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.renameSync(target, dest);
   return dest;

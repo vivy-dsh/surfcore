@@ -29,7 +29,7 @@ after(() => {
 const NOW = Date.parse('2026-10-22T12:00:00+08:00');
 const CFG = normalizeMemoryCardConfig({ maxChars: 4000, injectMaxChars: { qq: 900, bili: 700 } });
 
-test('重要度：和主人的情绪互动最重，第一次见面是永久锚点', () => {
+test('重要度：主人情绪互动得分高，显式指定初次相遇后是永久锚点', () => {
   const first = scoreMemory({
     text: '主人第一次对wo说：以后就是一家人了，最喜欢角色',
     isOwner: true, isPrivate: true, direct: true, isFirst: true,
@@ -514,6 +514,24 @@ test('初次相遇：只由手动指定，可单条指定、也可多条合并�
   assert.match(event.text, /一起在群里聊到很晚/);
   assert.equal(card.meta.firstMetRecordIds.length, 3);
   assert.equal(card.meta.firstMetEventId, event.id);
+});
+
+test('初次相遇：手动引用指向已删除记录时清理无效状态', () => {
+  const card = createEmptyCard(NOW);
+  const owner = addOwnerRecord(card, 0, '主人曾经说过的一句话');
+  card.meta.firstMetSource = 'manual';
+  card.meta.firstMetAt = new Date(NOW).toISOString();
+  card.meta.firstMetRecordIds = ['deleted-event'];
+  card.meta.firstMetEventId = 'deleted-event';
+
+  refreshInitialState(card);
+
+  assert.equal(card.meta.firstMetSource, '');
+  assert.equal(card.meta.firstMetAt, '');
+  assert.deepEqual(card.meta.firstMetRecordIds, []);
+  assert.equal(card.meta.firstMetEventId, '');
+  assert.equal(owner.firstMet, false);
+  assert.equal(owner.pinned, false);
 });
 
 test('最初：渲染独立分区，且不会被彻底遗忘', () => {

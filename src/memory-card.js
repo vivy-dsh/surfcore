@@ -503,7 +503,7 @@ export function refreshInitialState(card) {
   const manualRecords = manual
     ? card.records.filter((record) => manualIds.has(record.id))
     : [];
-  const hasManual = manual && (manualEvent !== null || manualRecords.length > 0);
+  const hasManual = manual && (Boolean(manualEvent) || manualRecords.length > 0);
   if (!hasManual) {
     card.meta.firstMetSource = '';
     card.meta.firstMetAt = '';
